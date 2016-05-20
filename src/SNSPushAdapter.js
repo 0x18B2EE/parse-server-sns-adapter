@@ -113,14 +113,14 @@ SNSPushAdapter.prototype.sendToAPNS = function (data, devices) {
             // Follow the same logic as APNS service.  If no appIdentifier, send it!
             if (!device.appIdentifier || device.appIdentifier === '') {
                 deviceSends.push(device);
-            }
-
-            else if (device.appIdentifier === iosConfig.bundleId) {
+            } else if (device.appIdentifier === iosConfig.bundleId) {
                 deviceSends.push(device);
             }
         }
         if (deviceSends.length > 0) {
-            promises.push(this.sendToSNS(payload, deviceSends, iosConfig.ARN));
+            let sendPromises = this.sendToSNS(payload, deviceSends, iosConfig.ARN);
+            for (let i = 0; i < sendPromises.length; i++)
+                promises.push(sendPromises[i]);
         }
     }
 
@@ -166,16 +166,19 @@ SNSPushAdapter.prototype.getPlatformArn = function (device, arn, callback) {
  * Exchange the device token for an ARN
  */
 SNSPushAdapter.prototype.exchangeTokenPromise = function (device, platformARN) {
-    return new Parse.Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
 
         this.getPlatformArn(device, platformARN, (err, data) => {
             if (!err && data.EndpointArn) {
                 resolve({device: device, arn: data.EndpointArn});
             }
-            else
-            {
-                log.error(LOG_PREFIX, err);
-                reject(err);
+            else {
+                log.error(LOG_PREFIX, "Error sending push " + err);
+                log.verbose(LOG_PREFIX, "Error details " + err.stack);
+                reject({
+                    device: device,
+                    transmitted: false
+                });
             }
         });
     });
@@ -196,7 +199,7 @@ SNSPushAdapter.prototype.sendSNSPayload = function (arn, payload, device) {
         TargetArn: arn
     };
 
-    return new Parse.Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
         var response = {
             device: {
                 deviceType: device.deviceType,
@@ -211,7 +214,7 @@ SNSPushAdapter.prototype.sendSNSPayload = function (arn, payload, device) {
                 if (err.stack) {
                     response.response = err.stack;
                 }
-                return reject(response);
+                return resolve(response);
             }
 
             if (data && data.MessageId) {
@@ -232,14 +235,22 @@ SNSPushAdapter.prototype.sendSNSPayload = function (arn, payload, device) {
 SNSPushAdapter.prototype.send = function (data, installations) {
     let deviceMap = utils.classifyInstallations(installations, this.availablePushTypes);
 
-    let sendPromises = Object.keys(deviceMap).forEach((pushType) => {
+    let sendPromises = [];
+    Object.keys(deviceMap).forEach((pushType) => {
         var devices = deviceMap[pushType];
 
-        var sender = this.senderMap[pushType];
-        return sender(data, devices);
+        if (devices.length) {
+            let sender = this.senderMap[pushType];
+            let results = sender(data, devices);
+            for (let i = 0; i < results.length; i++)
+                sendPromises.push(results[i]);
+        }
     });
 
-    return Parse.Promise.when(sendPromises);
+    return Promise.all(sendPromises).then(function (promises) {
+        // flatten all
+        return [].concat.apply([], promises);
+    });
 }
 
 module.exports = SNSPushAdapter;
