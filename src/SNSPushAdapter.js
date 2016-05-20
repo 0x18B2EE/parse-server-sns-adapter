@@ -109,7 +109,7 @@ SNSPushAdapter.prototype.sendToAPNS = function (data, devices) {
 
         var deviceSends = [];
         for (let device of devices) {
-
+            device.deviceType = 'ios';
             // Follow the same logic as APNS service.  If no appIdentifier, send it!
             if (!device.appIdentifier || device.appIdentifier === '') {
                 deviceSends.push(device);
@@ -130,7 +130,9 @@ SNSPushAdapter.prototype.sendToAPNS = function (data, devices) {
 SNSPushAdapter.prototype.sendToGCM = function (data, devices) {
     var payload = SNSPushAdapter.generateAndroidPayload(data);
     var pushConfig = this.snsConfig['android'];
-
+    for (let device of devices) {
+        device.deviceType = 'gcm';
+    }
     return this.sendToSNS(payload, devices, pushConfig.ARN);
 }
 
