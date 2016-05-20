@@ -138,18 +138,12 @@ SNSPushAdapter.prototype.sendToGCM = function (data, devices) {
 
 SNSPushAdapter.prototype.sendToSNS = function (payload, devices, platformArn) {
 
-    let exchangePromises = devices.map((device) => {
-        return this.exchangeTokenPromise(device, platformArn);
+    let promises = [];
+    devices.map((device) => {
+        promises.push(this.exchangeTokenPromise(device, platformArn).then(response => {
+            return this.sendSNSPayload(response.arn, payload, response.device);
+        }));
     });
-
-    // Publish off to SNS!
-    // Bulk publishing is not yet supported on Amazon SNS.
-    let promises = Parse.Promise.when(exchangePromises).then(exchangeResponses => {
-        exchangeResponses.map((exchangeResponse) => {
-            return this.sendSNSPayload(exchangeResponse.arn, payload, exchangeResponse.device);
-        });
-    });
-
     return promises;
 }
 
