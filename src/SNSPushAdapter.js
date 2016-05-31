@@ -14,7 +14,7 @@ const DEFAULT_REGION = "us-east-1";
 const utils = require('parse-server-push-adapter').utils;
 
 function SNSPushAdapter(pushConfig) {
-    this.validPushTypes = ['ios', 'android'];
+    this.validPushTypes = ['ios', 'gcm', 'adm'];
     this.availablePushTypes = [];
     this.snsConfig = pushConfig.pushTypes;
     this.senderMap = {};
@@ -36,7 +36,7 @@ function SNSPushAdapter(pushConfig) {
                 case 'ios':
                     this.senderMap[pushType] = this.sendToAPNS.bind(this);
                     break;
-                case 'android':
+                case 'gcm':
                     this.senderMap[pushType] = this.sendToGCM.bind(this);
                     break;
             }
@@ -58,8 +58,79 @@ SNSPushAdapter.prototype.getValidPushTypes = function () {
     return this.availablePushTypes;
 }
 
-SNSPushAdapter.classifyInstallations = function (installations, validTypes) {
-    return utils.classifyInstallations(installations, validTypes)
+/**
+   * Classify the device token of installations based on its device type.
+   * @param {Object} installations An array of installations
+   * @param {Array} validPushTypes An array of valid push types(string)
+   * @returns {Object} A map whose key is device type and value is an array of device
+   */
+
+SNSPushAdapter.prototype.classifyInstallations = function (installations, validPushTypes) {
+    // Init deviceTokenMap, create a empty array for each valid pushType
+    var deviceMap = {};
+    var _iteratorNormalCompletion = true;
+    var _didIteratorError = false;
+    var _iteratorError = undefined;
+
+    try {
+        for (var _iterator = validPushTypes[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+            var validPushType = _step.value;
+
+            deviceMap[validPushType] = [];
+        }
+    } catch (err) {
+        _didIteratorError = true;
+        _iteratorError = err;
+    } finally {
+        try {
+            if (!_iteratorNormalCompletion && _iterator.return) {
+                _iterator.return();
+            }
+        } finally {
+            if (_didIteratorError) {
+                throw _iteratorError;
+            }
+        }
+    }
+
+    var _iteratorNormalCompletion2 = true;
+    var _didIteratorError2 = false;
+    var _iteratorError2 = undefined;
+
+    try {
+        for (var _iterator2 = installations[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+            var installation = _step2.value;
+
+            // No deviceToken, ignore
+            if (!installation.deviceToken) {
+                continue;
+            }
+            let pushType = installation.pushType ? installation.pushType : installation.deviceType;
+            log.verbose("clarifying install: ", installation);
+            // if (installation.pushType)
+            if (deviceMap[pushType]) {
+                deviceMap[pushType].push({
+                    deviceToken: installation.deviceToken,
+                    appIdentifier: installation.appIdentifier
+                });
+            }
+        }
+    } catch (err) {
+        _didIteratorError2 = true;
+        _iteratorError2 = err;
+    } finally {
+        try {
+            if (!_iteratorNormalCompletion2 && _iterator2.return) {
+                _iterator2.return();
+            }
+        } finally {
+            if (_didIteratorError2) {
+                throw _iteratorError2;
+            }
+        }
+    }
+
+    return deviceMap;
 }
 
 SNSPushAdapter.generateiOSPayload = function (data, production) {
@@ -78,7 +149,7 @@ SNSPushAdapter.generateiOSPayload = function (data, production) {
     return payload;
 }
 
-SNSPushAdapter.generateAndroidPayload = function (data, pushId, timeStamp) {
+SNSPushAdapter.generateGCMPayload = function (data, pushId, timeStamp) {
     var pushId = pushId || utils.randomString(10);
     timeStamp = timeStamp || Date.now();
     var payload = GCM.generateGCMPayload(data.data, pushId, timeStamp, data.expirationTime);
@@ -128,8 +199,8 @@ SNSPushAdapter.prototype.sendToAPNS = function (data, devices) {
 }
 
 SNSPushAdapter.prototype.sendToGCM = function (data, devices) {
-    var payload = SNSPushAdapter.generateAndroidPayload(data);
-    var pushConfig = this.snsConfig['android'];
+    var payload = SNSPushAdapter.generateGCMPayload(data);
+    var pushConfig = this.snsConfig['gcm'];
     for (let device of devices) {
         device.deviceType = 'gcm';
     }
