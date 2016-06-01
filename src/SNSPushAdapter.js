@@ -39,6 +39,9 @@ function SNSPushAdapter(pushConfig) {
                 case 'gcm':
                     this.senderMap[pushType] = this.sendToGCM.bind(this);
                     break;
+                case 'adm':
+                    this.senderMap[pushType] = this.sendToADM.bind(this);
+                    break;    
             }
         }
     }
@@ -160,6 +163,18 @@ SNSPushAdapter.generateGCMPayload = function (data, pushId, timeStamp) {
     };
 }
 
+SNSPushAdapter.generateADMPayload = function (data, production) {
+    let payload = {
+        data: data.data
+        // expiresAfter: data.expirationTime
+    };
+    let result = {
+        'ADM': JSON.stringify(payload),
+    }; 
+    
+    return result;
+}
+
 SNSPushAdapter.prototype.sendToAPNS = function (data, devices) {
 
     var iosPushConfig = this.snsConfig['ios'];
@@ -203,6 +218,15 @@ SNSPushAdapter.prototype.sendToGCM = function (data, devices) {
     var pushConfig = this.snsConfig['gcm'];
     for (let device of devices) {
         device.deviceType = 'gcm';
+    }
+    return this.sendToSNS(payload, devices, pushConfig.ARN);
+}
+
+SNSPushAdapter.prototype.sendToADM = function (data, devices) {
+    var payload = SNSPushAdapter.generateADMPayload(data);
+    var pushConfig = this.snsConfig['adm'];
+    for (let device of devices) {
+        device.deviceType = 'adm';
     }
     return this.sendToSNS(payload, devices, pushConfig.ARN);
 }
@@ -280,7 +304,7 @@ SNSPushAdapter.prototype.sendSNSPayload = function (arn, payload, device) {
 
         this.sns.publish(object, (err, data) => {
             if (err != null) {
-                log.error(LOG_PREFIX, "Error sending push " + err);
+                log.error(LOG_PREFIX, "Error sending push: ", err);
                 response.transmitted = false;
                 if (err.stack) {
                     response.response = err.stack;
@@ -304,8 +328,8 @@ SNSPushAdapter.prototype.sendSNSPayload = function (arn, payload, device) {
  */
 
 SNSPushAdapter.prototype.send = function (data, installations) {
-    let deviceMap = utils.classifyInstallations(installations, this.availablePushTypes);
-
+    let deviceMap = this.classifyInstallations(installations, this.availablePushTypes);
+    
     let sendPromises = [];
     Object.keys(deviceMap).forEach((pushType) => {
         var devices = deviceMap[pushType];
