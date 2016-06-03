@@ -14,7 +14,7 @@ const DEFAULT_REGION = "us-east-1";
 const utils = require('parse-server-push-adapter').utils;
 
 function SNSPushAdapter(pushConfig) {
-    this.validPushTypes = ['ios', 'gcm', 'adm'];
+    this.validPushTypes = ['ios', 'gcm', 'adm', 'wns'];
     this.availablePushTypes = [];
     this.snsConfig = pushConfig.pushTypes;
     this.senderMap = {};
@@ -41,7 +41,10 @@ function SNSPushAdapter(pushConfig) {
                     break;
                 case 'adm':
                     this.senderMap[pushType] = this.sendToADM.bind(this);
-                    break;    
+                    break;
+                case 'wns':
+                    this.senderMap[pushType] = this.sendToWNS.bind(this);
+                    break;
             }
         }
     }
@@ -105,15 +108,18 @@ SNSPushAdapter.prototype.classifyInstallations = function (installations, validP
             var installation = _step2.value;
 
             // No deviceToken, ignore
-            if (!installation.deviceToken) {
+            let deviceToken = installation.channelUri ? installation.channelUri : installation.deviceToken;
+            if (!deviceToken) {
                 continue;
             }
             let pushType = installation.pushType ? installation.pushType : installation.deviceType;
-            log.verbose("clarifying install: ", installation);
-            // if (installation.pushType)
+            if (pushType === 'winphone') {
+                pushType = 'wns';
+            }
+            
             if (deviceMap[pushType]) {
                 deviceMap[pushType].push({
-                    deviceToken: installation.deviceToken,
+                    deviceToken: deviceToken,
                     appIdentifier: installation.appIdentifier
                 });
             }
@@ -175,6 +181,14 @@ SNSPushAdapter.generateADMPayload = function (data, production) {
     return result;
 }
 
+SNSPushAdapter.generateWNSPayload = function (data, production) {
+    let result = {
+        'WNS': JSON.stringify(data.data),
+    }; 
+    
+    return result;
+}
+
 SNSPushAdapter.prototype.sendToAPNS = function (data, devices) {
 
     var iosPushConfig = this.snsConfig['ios'];
@@ -231,14 +245,34 @@ SNSPushAdapter.prototype.sendToADM = function (data, devices) {
     return this.sendToSNS(payload, devices, pushConfig.ARN);
 }
 
+SNSPushAdapter.prototype.sendToWNS = function (data, devices) {
+    var payload = SNSPushAdapter.generateWNSPayload(data);
+    var pushConfig = this.snsConfig['wns'];
+    for (let device of devices) {
+        device.deviceType = 'wns';
+    }
+    let messageAttributes = {
+        "AWS.SNS.MOBILE.WNS.Type": {
+            DataType: "String",
+            StringValue: "wns/raw",
+        },
+        "AWS.SNS.MOBILE.WNS.CachePolicy": {
+            DataType: "String",
+            StringValue: "cache",
+        }
+    }
+    
+    return this.sendToSNS(payload, devices, pushConfig.ARN, messageAttributes);
+}
+
+
 // Exchange the device token for the Amazon resource ID
 
-SNSPushAdapter.prototype.sendToSNS = function (payload, devices, platformArn) {
-
+SNSPushAdapter.prototype.sendToSNS = function (payload, devices, platformArn, messageAttributes) {
     let promises = [];
     devices.map((device) => {
         promises.push(this.exchangeTokenPromise(device, platformArn).then(response => {
-            return this.sendSNSPayload(response.arn, payload, response.device);
+            return this.sendSNSPayload(response.arn, payload, response.device, messageAttributes);
         }));
     });
     return promises;
@@ -286,12 +320,13 @@ SNSPushAdapter.prototype.exchangeTokenPromise = function (device, platformARN) {
  * @param device Device info (used for returning push status)
  * @returns {Parse.Promise}
  */
-SNSPushAdapter.prototype.sendSNSPayload = function (arn, payload, device) {
+SNSPushAdapter.prototype.sendSNSPayload = function (arn, payload, device, messageAttributes) {
 
     var object = {
         Message: JSON.stringify(payload),
         MessageStructure: 'json',
-        TargetArn: arn
+        TargetArn: arn,
+        MessageAttributes: messageAttributes
     };
 
     return new Promise((resolve, reject) => {
